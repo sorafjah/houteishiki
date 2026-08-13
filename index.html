@@ -130,7 +130,7 @@
   }
   .sheet-box{
     background:#fff; border:1px solid var(--border); border-radius:12px; padding:24px;
-    --math-font-size:21px;
+    --math-font-size:21px; --row-space:30mm;
   }
   .name-box{ display:flex; align-items:center; gap:6px; margin-bottom:22px; max-width:240px; }
   .name-box .label{ font-size:14px; flex-shrink:0; }
@@ -158,7 +158,7 @@
   .group-heading .g-name{ font-size:12px; font-weight:700; color:var(--sub); }
 
   .sheet-grid{
-    display:grid; grid-template-columns:1fr 1fr; column-gap:24px; row-gap:40px;
+    display:grid; grid-template-columns:1fr 1fr; column-gap:24px; row-gap:var(--row-space);
   }
   .sheet-item{
     display:flex; align-items:flex-start; gap:8px;
@@ -430,6 +430,11 @@
         <span class="g-label" style="font-size:17px;">文字サイズ</span>
         <div class="fontsize-stepper"><button data-fontsize-dir="-1">－</button><input id="fontsize_input" value="16" inputmode="numeric" readonly><button data-fontsize-dir="1">＋</button></div>
       </div>
+      <div class="settings-group">
+        <span class="g-label" style="font-size:17px;">計算スペース</span>
+        <div class="fontsize-stepper"><button data-space-dir="-1">－</button><input id="space_input" value="30" inputmode="numeric" readonly><button data-space-dir="1">＋</button></div>
+        <span class="g-label" style="font-size:13px;">mm</span>
+      </div>
     </div>
 
     <div class="sheet-box" id="sheetBox">
@@ -461,14 +466,18 @@
     <h3>④ 印刷・保存する</h3>
     <ul>
       <li>印刷する：印刷用ページを新しいタブで開きます</li>
-      <li>解答付きをプレビュー：答え付きのプリントを別画面で確認できます</li>
+      <li>解答付きをプレビュー：答えと途中式の両方が入ったプリントを別画面で確認できます</li>
       <li>1問ずつの画像で一括ダウンロード：全問題を個別のPNG画像にしてZIPでまとめて保存します</li>
       <li>ダウンロード：印刷用のHTMLファイルとして保存します</li>
     </ul>
 
-    <h3>⑤ 文字サイズ</h3>
-    <p>「文字サイズ」の－＋ボタンで、数式の大きさを変えられます。画面表示・印刷の両方に反映されます。</p>
+    <h3>⑤ 文字サイズ・計算スペース</h3>
+    <p>「文字サイズ」の－＋ボタンで、数式の大きさを変えられます。「計算スペース」の－＋ボタンでは、問題と問題の間の余白（生徒が計算を書く場所）をmm単位で調整できます。どちらも画面表示・印刷の両方に反映されます。</p>
 
+    <label style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px;font-size:13px;color:var(--sub);">
+      <input type="checkbox" id="hideHelpCheck" style="width:18px;height:18px;">
+      次回からは表示しない
+    </label>
     <button class="modal-close" id="helpCloseBtn">とじる</button>
   </div>
 </div>
@@ -494,12 +503,26 @@
   const helpBtn = document.getElementById('helpBtn');
   const helpModal = document.getElementById('helpModal');
   const helpCloseBtn = document.getElementById('helpCloseBtn');
-  function openHelp(){ helpModal.classList.add('show'); }
-  function closeHelp(){ helpModal.classList.remove('show'); }
+  const hideHelpCheck = document.getElementById('hideHelpCheck');
+  const HELP_KEY = 'hideHelp_houteishiki';
+  function getHideHelpPref(){
+    try{ return localStorage.getItem(HELP_KEY) === '1'; }catch(e){ return false; }
+  }
+  function setHideHelpPref(hide){
+    try{ localStorage.setItem(HELP_KEY, hide ? '1' : '0'); }catch(e){}
+  }
+  function openHelp(){
+    hideHelpCheck.checked = getHideHelpPref();
+    helpModal.classList.add('show');
+  }
+  function closeHelp(){
+    setHideHelpPref(hideHelpCheck.checked);
+    helpModal.classList.remove('show');
+  }
   helpBtn.addEventListener('click', openHelp);
   helpCloseBtn.addEventListener('click', closeHelp);
   helpModal.addEventListener('click', (e)=>{ if(e.target === helpModal) closeHelp(); });
-  window.addEventListener('load', openHelp);
+  window.addEventListener('load', ()=>{ if(!getHideHelpPref()) openHelp(); });
 
   let problems = []; // { type, raw, answer }
   let groupNotes = {}; // type -> 自由記述テキスト
@@ -561,8 +584,17 @@
   }
   function leadStr(n){ return n<0 ? '-'+Math.abs(n) : String(n); }
   function nextStr(n){ return n<0 ? ('-'+Math.abs(n)) : ('+'+n); }
+  // 係数付きの項（1やー1は係数を省略する）
+  function coefTerm(n, varName, isFirst){
+    if(n===0) return isFirst ? '0' : '';
+    const sign = n<0 ? '-' : (isFirst?'':'+');
+    const mag = Math.abs(n);
+    const magStr = mag===1 ? '' : String(mag);
+    return sign+magStr+varName;
+  }
 
   // ---- 各問題タイプの生成ロジック ----
+  // answer は短い答え、steps は途中式（改行区切り）
   function genEqAdd(){
     const xmin=getNum('eq_add_xmin'), xmax=getNum('eq_add_xmax');
     const amin=getNum('eq_add_amin'), amax=getNum('eq_add_amax');
@@ -570,7 +602,11 @@
     const x = randInt(xlo, xmax);
     const a = randIntNonZero(amin, amax);
     const b = x + a;
-    return { raw: 'x+'+a+'='+leadStr(b), answer: 'x='+x };
+    return {
+      raw: 'x+'+a+'='+leadStr(b),
+      answer: 'x='+x,
+      steps: 'x='+leadStr(b)+'-'+a+'\nx='+x
+    };
   }
   function genEqSub(){
     const xmin=getNum('eq_sub_xmin'), xmax=getNum('eq_sub_xmax');
@@ -579,7 +615,11 @@
     const x = randInt(xlo, xmax);
     const a = randIntNonZero(amin, amax);
     const b = x - a;
-    return { raw: 'x-'+a+'='+leadStr(b), answer: 'x='+x };
+    return {
+      raw: 'x-'+a+'='+leadStr(b),
+      answer: 'x='+x,
+      steps: 'x='+leadStr(b)+'+'+a+'\nx='+x
+    };
   }
   function genEqMul(){
     const xmin=getNum('eq_mul_xmin'), xmax=getNum('eq_mul_xmax');
@@ -588,7 +628,11 @@
     const x = randInt(xlo, xmax);
     const a = randIntNonZero(amin, amax);
     const b = a * x;
-    return { raw: a+'x='+leadStr(b), answer: 'x='+x };
+    return {
+      raw: a+'x='+leadStr(b),
+      answer: 'x='+x,
+      steps: 'x='+leadStr(b)+'÷'+a+'\nx='+x
+    };
   }
   function genEqDiv(){
     const amin=getNum('eq_div_amin'), amax=getNum('eq_div_amax');
@@ -596,7 +640,11 @@
     const a = randIntNonZero(amin, amax);
     const q = randIntNonZero(qmin, qmax);
     const x = a * q;
-    return { raw: 'x÷'+a+'='+leadStr(q), answer: 'x='+x };
+    return {
+      raw: 'x÷'+a+'='+leadStr(q),
+      answer: 'x='+x,
+      steps: 'x='+leadStr(q)+'×'+a+'\nx='+x
+    };
   }
   function genEqStep2(){
     const xmin=getNum('eq_step2_xmin'), xmax=getNum('eq_step2_xmax');
@@ -608,7 +656,15 @@
     const a = randIntNonZero(amin, amax);
     const b = randInt(blo, bmax);
     const c = a * x + b;
-    return { raw: a+'x'+nextStr(b)+'='+leadStr(c), answer: 'x='+x };
+    // bを移項する（符号が反転する）
+    const moveB = b<0 ? ('+'+Math.abs(b)) : ('-'+b);
+    const steps = [
+      a+'x='+leadStr(c)+moveB,
+      a+'x='+leadStr(a*x),
+      'x='+leadStr(a*x)+'÷'+a,
+      'x='+x
+    ].join('\n');
+    return { raw: a+'x'+nextStr(b)+'='+leadStr(c), answer: 'x='+x, steps };
   }
   function genEqBoth(){
     const xmin=getNum('eq_both_xmin'), xmax=getNum('eq_both_xmax');
@@ -623,7 +679,16 @@
     if(a===c) c = a + 1;
     const b = randInt(blo, bmax);
     const d = (a - c) * x + b;
-    return { raw: a+'x'+nextStr(b)+'='+c+'x'+nextStr(d), answer: 'x='+x };
+    const coef = a - c;
+    const rhs = d - b;
+    const moveB = b<0 ? ('+'+Math.abs(b)) : ('-'+b);
+    const steps = [
+      a+'x-'+c+'x='+leadStr(d)+moveB,
+      coefTerm(coef,'x',true)+'='+leadStr(rhs),
+      'x='+leadStr(rhs)+'÷'+(coef<0?'('+coef+')':coef),
+      'x='+x
+    ].join('\n');
+    return { raw: a+'x'+nextStr(b)+'='+c+'x'+nextStr(d), answer: 'x='+x, steps };
   }
 
   const generators = {
@@ -691,6 +756,7 @@
         if(c!==-1){ result += '^{'+toLatex(text.slice(i+2,c))+'}'; i=c+1; continue; }
       }
       if(ch==='^' && text[i+1]){ result += '^{'+text[i+1]+'}'; i+=2; continue; }
+      if(ch==='±'){ result+='\\pm '; i++; continue; }
       if(ch==='('){
         const c = findMatchingParen(text,i);
         if(c!==-1 && text[c+1]==='/' && text[c+2]==='('){
@@ -922,6 +988,10 @@
       const isEditing = item.classList.contains('editing');
       if(isEditing){
         const newVal = document.getElementById('mainEdit_'+idx).value;
+        if(newVal !== problems[idx].raw){
+          // 手で書き換えた問題は自動の途中式が合わなくなるので消す
+          problems[idx].steps = '';
+        }
         problems[idx].raw = newVal;
         item.classList.remove('editing');
         renderMath(document.getElementById('mainPreview_'+idx), newVal);
@@ -946,24 +1016,35 @@
   });
 
   // ---- 印刷用HTML生成 ----
-  const PRINT_STYLE =
-    '*{box-sizing:border-box;}\n' +
+  // 計算スペース（問題の下の余白）は教員が調整できるようにmm指定で受け取る
+  function buildPrintStyle(spaceMm){
+    return '*{box-sizing:border-box;}\n' +
     'body{font-family:"BIZ UDPGothic",sans-serif;color:#000;margin:0;padding:16px;background:#fff;}\n' +
     '.sheet{max-width:190mm;margin:0 auto;}\n' +
     '.name-box{display:flex;align-items:center;gap:6px;margin-bottom:22px;max-width:220px;}\n' +
     '.name-box .label{font-size:12pt;}\n' +
     '.name-box .line{flex:1;border-bottom:1.5px solid #000;height:22px;}\n' +
-    '.group-block{margin-bottom:44px;}\n' +
+    '.group-block{margin-bottom:'+(spaceMm+8)+'mm;}\n' +
     '.note-text{font-size:13pt;font-weight:400;line-height:1.7;white-space:pre-wrap;margin-bottom:12px;font-family:"BIZ UDMincho",serif;}\n' +
-    '.grid{display:grid;grid-template-columns:1fr 1fr;column-gap:20px;row-gap:36px;}\n' +
-    '.problem{display:flex;align-items:center;gap:8px;font-size:12pt;}\n' +
+    '.grid{display:grid;grid-template-columns:1fr 1fr;column-gap:20px;row-gap:'+spaceMm+'mm;}\n' +
+    '.problem{display:flex;align-items:flex-start;gap:8px;font-size:12pt;}\n' +
     '.q-num{font-weight:400;min-width:22px;flex-shrink:0;}\n' +
-    '.q-body{flex-shrink:0;display:flex;align-items:center;}\n' +
+    '.q-body{flex-shrink:0;display:flex;align-items:center;gap:6px;}\n' +
+    '.brace-print{font-family:"BIZ UDMincho",serif;line-height:1;flex-shrink:0;}\n' +
     '.answer-line{color:#000;letter-spacing:2px;flex-shrink:0;}\n' +
-    '.a-body{flex-shrink:0;display:flex;align-items:center;}\n';
+    '.a-body{flex-shrink:0;display:flex;align-items:center;}\n' +
+    // 解答プリント用（問題→途中式→答え、の順に縦に並べる。答えは枠で囲んで見間違いを防ぐ）
+    '.ans-grid{display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:10mm;}\n' +
+    '.ans-item{break-inside:avoid;page-break-inside:avoid;}\n' +
+    '.steps-row{margin-left:30px;margin-top:4px;}\n' +
+    '.steps-row img{display:block;}\n' +
+    '.answer-row{margin-left:30px;margin-top:8px;display:inline-flex;align-items:center;gap:8px;padding:3px 12px;border:1.5px solid #000;border-radius:6px;}\n' +
+    '.answer-row .ans-label{font-size:11pt;font-weight:bold;}\n' +
+    '.answer-row img{display:block;}\n';
+  }
 
   // グループ（ジャンル）ごとに「自由記述＋グリッド」のブロックを作る。番号は全体を通して連番。
-  function buildGroupedSheetHtml(qImages, aImages, showAnswer){
+  function buildGroupedSheetHtml(qImages, aImages, sImages, showAnswer){
     const groups = [];
     problems.forEach((p, idx)=>{
       const last = groups[groups.length-1];
@@ -978,33 +1059,41 @@
         const qImg = qImages[idx]
           ? '<img src="'+qImages[idx].dataUrl+'" style="height:'+qImages[idx].height+'px;width:'+qImages[idx].width+'px;">'
           : '<span>（表示エラー）</span>';
-        let tail;
         if(showAnswer){
-          const aImg = aImages[idx]
+          const aImg = (aImages && aImages[idx])
             ? '<img src="'+aImages[idx].dataUrl+'" style="height:'+aImages[idx].height+'px;width:'+aImages[idx].width+'px;">'
             : '<span>-</span>';
-          tail = '<span class="a-body">'+aImg+'</span>';
-        } else {
-          tail = '<span class="answer-line">　　　　　</span>';
+          const sImg = (sImages && sImages[idx])
+            ? '<div class="steps-row"><img src="'+sImages[idx].dataUrl+'" style="height:'+sImages[idx].height+'px;width:'+sImages[idx].width+'px;"></div>'
+            : '';
+          return '<div class="ans-item">' +
+            '<div class="problem">' +
+              '<span class="q-num">('+(idx+1)+')</span>' +
+              '<span class="q-body">'+qImg+'</span>' +
+            '</div>' +
+            sImg +
+            '<div class="answer-row"><span class="ans-label">答え</span>'+aImg+'</div>' +
+          '</div>';
         }
         return '<div class="problem">' +
           '<span class="q-num">('+(idx+1)+')</span>' +
           '<span class="q-body">'+qImg+'</span>' +
-          tail +
+          '<span class="answer-line">　　　　　</span>' +
         '</div>';
       }).join('\n');
-      return '<div class="group-block">'+noteHtml+'<div class="grid">'+itemsHtml+'</div></div>';
+      const gridClass = showAnswer ? 'ans-grid' : 'grid';
+      return '<div class="group-block">'+noteHtml+'<div class="'+gridClass+'">'+itemsHtml+'</div></div>';
     }).join('\n');
   }
 
-  function buildPrintHtml(qImages, aImages, showAnswer){
-    const bodyHtml = buildGroupedSheetHtml(qImages, aImages, showAnswer);
+  function buildPrintHtml(qImages, aImages, sImages, showAnswer){
+    const bodyHtml = buildGroupedSheetHtml(qImages, aImages, sImages, showAnswer);
     const titleText = showAnswer ? '方程式 プリント（解答）' : '方程式 プリント';
     return '<!DOCTYPE html>\n<html lang="ja"><head><meta charset="UTF-8">\n' +
       '<title>'+titleText+'</title>\n' +
       '<link rel="preconnect" href="https://fonts.googleapis.com">\n' +
       '<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic&family=BIZ+UDMincho&display=swap" rel="stylesheet">\n' +
-      '<style>\n' + PRINT_STYLE +
+      '<style>\n' + buildPrintStyle(SPACE_MM) +
       '.print-btn-area{text-align:center;margin:0 0 16px;}\n' +
       '.print-btn{min-height:44px;padding:0 24px;border-radius:12px;border:none;background:#2F8F7A;color:#fff;font-size:15px;font-weight:bold;cursor:pointer;}\n' +
       '@media print{ body{padding:0;} @page{size:A4;margin:15mm 10mm;} .print-btn-area{display:none;} }\n' +
@@ -1036,32 +1125,48 @@
   }
 
   let FONT_SIZE_PX = 16;
+  let SPACE_MM = 30;
   const sheetBox = document.getElementById('sheetBox');
   const fontsizeInput = document.getElementById('fontsize_input');
+  const spaceInput = document.getElementById('space_input');
   function applyFontSize(){
     fontsizeInput.value = FONT_SIZE_PX;
     sheetBox.style.setProperty('--math-font-size', FONT_SIZE_PX + 'px');
   }
+  function applySpace(){
+    spaceInput.value = SPACE_MM;
+    sheetBox.style.setProperty('--row-space', SPACE_MM + 'mm');
+  }
   document.querySelectorAll('.fontsize-stepper button').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const dir = parseInt(btn.dataset.fontsizeDir, 10);
-      FONT_SIZE_PX = Math.max(14, Math.min(48, FONT_SIZE_PX + dir*2));
-      applyFontSize();
+      if(btn.dataset.fontsizeDir !== undefined){
+        const dir = parseInt(btn.dataset.fontsizeDir, 10);
+        FONT_SIZE_PX = Math.max(14, Math.min(48, FONT_SIZE_PX + dir*2));
+        applyFontSize();
+      }
+      if(btn.dataset.spaceDir !== undefined){
+        const dir = parseInt(btn.dataset.spaceDir, 10);
+        SPACE_MM = Math.max(5, Math.min(80, SPACE_MM + dir*5));
+        applySpace();
+      }
     });
   });
   applyFontSize();
+  applySpace();
 
   async function buildOutput(withAnswer){
     if(problems.length === 0) return null;
     progressOverlay.classList.add('show');
     try{
       const qImages = await buildImagesFor(problems.map(p=>p.raw), FONT_SIZE_PX);
-      let aImages = [];
+      let aImages = [], sImages = [];
       if(withAnswer){
-        // 方程式は raw に「=」を含むため、解答画像は「x=5」の形をそのまま独立した式として作る
         aImages = await buildImagesFor(problems.map(p=>p.answer), FONT_SIZE_PX);
+        // 途中式は少し小さめに描画する
+        const stepSize = Math.max(12, FONT_SIZE_PX - 2);
+        sImages = await buildImagesFor(problems.map(p=>p.steps || ''), stepSize);
       }
-      return { qImages, aImages };
+      return { qImages, aImages, sImages };
     } catch(err){
       showStatus('作成中にエラーが起きました');
       return null;
@@ -1073,13 +1178,13 @@
   printBtn.addEventListener('click', async ()=>{
     const result = await buildOutput(false);
     if(!result) return;
-    openHtmlInNewTab(buildPrintHtml(result.qImages, result.aImages, false));
+    openHtmlInNewTab(buildPrintHtml(result.qImages, result.aImages, result.sImages, false));
   });
 
   downloadBtn.addEventListener('click', async ()=>{
     const result = await buildOutput(false);
     if(!result) return;
-    downloadHtml(buildPrintHtml(result.qImages, result.aImages, false), '方程式プリント.html');
+    downloadHtml(buildPrintHtml(result.qImages, result.aImages, result.sImages, false), '方程式プリント.html');
     showStatus('保存しました');
   });
 
@@ -1112,8 +1217,8 @@
   });
 
   // ---- 解答付きプレビュー（モーダル） ----
-  function openAnswerPreviewModal(qImages, aImages){
-    const bodyHtml = buildGroupedSheetHtml(qImages, aImages, true);
+  function openAnswerPreviewModal(qImages, aImages, sImages){
+    const bodyHtml = buildGroupedSheetHtml(qImages, aImages, sImages, true);
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(43,58,54,0.6);display:flex;align-items:center;justify-content:center;z-index:300;padding:16px;';
     overlay.innerHTML =
@@ -1124,7 +1229,7 @@
         '</div>' +
         '<div style="overflow-y:auto;padding:20px;flex:1;background:#F5F7F6;">' +
           '<div class="sheet" style="background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.08);">' +
-            '<style>'+PRINT_STYLE+'</style>' +
+            '<style>'+buildPrintStyle(SPACE_MM)+'</style>' +
             '<div class="name-box"><span class="label">名前</span><span class="line"></span></div>' +
             bodyHtml +
           '</div>' +
@@ -1140,11 +1245,11 @@
     overlay.querySelector('#apCloseX').addEventListener('click', closeModal);
     overlay.querySelector('#apCancelBtn').addEventListener('click', closeModal);
     overlay.querySelector('#apDownloadBtn').addEventListener('click', ()=>{
-      downloadHtml(buildPrintHtml(qImages, aImages, true), '方程式プリント_解答.html');
+      downloadHtml(buildPrintHtml(qImages, aImages, sImages, true), '方程式プリント_解答.html');
       showStatus('保存しました');
     });
     overlay.querySelector('#apPrintBtn').addEventListener('click', ()=>{
-      openHtmlInNewTab(buildPrintHtml(qImages, aImages, true));
+      openHtmlInNewTab(buildPrintHtml(qImages, aImages, sImages, true));
     });
     overlay.addEventListener('click', (e)=>{ if(e.target === overlay) closeModal(); });
   }
@@ -1152,7 +1257,7 @@
   answerPreviewBtn.addEventListener('click', async ()=>{
     const result = await buildOutput(true);
     if(!result) return;
-    openAnswerPreviewModal(result.qImages, result.aImages);
+    openAnswerPreviewModal(result.qImages, result.aImages, result.sImages);
   });
 })();
 </script>
